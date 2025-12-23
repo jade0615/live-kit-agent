@@ -4,6 +4,7 @@ from livekit import api as livekit_api
 import logging
 import asyncio
 import datetime
+import json
 from livekit.agents import (
     NOT_GIVEN,
     AgentFalseInterruptionEvent,
@@ -48,18 +49,31 @@ async def entrypoint(ctx: JobContext):
 
     caller_phone = ""
     dialed_number = ""
+    twilio_call_sid = None
 
     def on_participant_connected(participant: rtc.RemoteParticipant):
-        nonlocal caller_phone, dialed_number
+        nonlocal caller_phone, dialed_number, twilio_call_sid
         
         if participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP:
             attrs = participant.attributes or {}
+            
+            # 🔍 DEBUG: Log ALL attributes (can remove after confirming it works)
+            logger.info(f"🔍 ALL SIP Attributes: {json.dumps(attrs, indent=2)}")
+            
             caller_phone = attrs.get("sip.phoneNumber", "")
             dialed_number = attrs.get("sip.trunkPhoneNumber", "")
+            
+            # Extract Twilio CallSid from SIP attributes
+            twilio_call_sid = attrs.get("sip.twilio.callSid", "")
+            
             logger.info(f"📞 SIP participant: Caller={caller_phone}, Dialed={dialed_number}")
+            logger.info(f"📼 Twilio CallSid: {twilio_call_sid}")
+            if not twilio_call_sid:
+                logger.warning(f"⚠️ CallSid not found in sip.twilio.callSid attribute!")
             
             ctx.log_context_fields["caller_phone"] = caller_phone
             ctx.log_context_fields["dialed_number"] = dialed_number
+            ctx.log_context_fields["twilio_call_sid"] = twilio_call_sid
 
     ctx.room.on("participant_connected", on_participant_connected)
 
@@ -69,11 +83,24 @@ async def entrypoint(ctx: JobContext):
     for participant in ctx.room.remote_participants.values():
         if participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP:
             attrs = participant.attributes or {}
+            
+            # 🔍 DEBUG: Log ALL attributes (can remove after confirming it works)
+            logger.info(f"🔍 ALL SIP Attributes: {json.dumps(attrs, indent=2)}")
+            
             caller_phone = attrs.get("sip.phoneNumber", "")
             dialed_number = attrs.get("sip.trunkPhoneNumber", "")
+            
+            # Extract Twilio CallSid from SIP attributes
+            twilio_call_sid = attrs.get("sip.twilio.callSid", "")
+            
             logger.info(f"📞 Existing SIP participant found")
+            logger.info(f"📼 Twilio CallSid: {twilio_call_sid}")
+            if not twilio_call_sid:
+                logger.warning(f"⚠️ CallSid not found in sip.twilio.callSid attribute!")
+            
             ctx.log_context_fields["caller_phone"] = caller_phone
             ctx.log_context_fields["dialed_number"] = dialed_number
+            ctx.log_context_fields["twilio_call_sid"] = twilio_call_sid
             break
 
     # Fetch store info
@@ -128,16 +155,26 @@ async def entrypoint(ctx: JobContext):
             from services.api_client import create_conversation
             
             try:
+                # Build AI analysis with CallSid for recording integration
+                ai_analysis = {
+                    "callSid": twilio_call_sid,
+                    "recordingPending": True if twilio_call_sid else False,
+                    "callEndTime": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                }
+                
                 result = await create_conversation(
                     store_id=assistant.store_id,
                     customer_phone=assistant.caller_phone,
                     transcript={"messages": assistant.call_transcript},
                     duration=assistant.get_call_duration_seconds(),
-                    session=assistant.api_session
+                    session=assistant.api_session,
+                    ai_analysis=ai_analysis
                 )
                 
                 if "error" not in result:
                     logger.info("✅ Conversation saved successfully")
+                    if twilio_call_sid:
+                        logger.info(f"📼 CallSid saved for recording: {twilio_call_sid}")
                 else:
                     logger.error(f"❌ Failed to save conversation: {result.get('error')}")
             except Exception as e:
@@ -198,7 +235,7 @@ async def entrypoint(ctx: JobContext):
             logger.info(f"📝 [customer] ...: {text}")
             return
         
-        timestamp = datetime.datetime.utcnow().isoformat()
+        timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
         
         # Build transcript entry
         entry = {
@@ -219,6 +256,11 @@ async def entrypoint(ctx: JobContext):
         """Called whenever the agent adds a message to the conversation."""
         item = event.item
         
+        # ✅ FIX: Only capture assistant messages (skip user messages)
+        # User messages are already captured by on_user_input_transcribed
+        if item.role != "assistant":
+            return
+        
         # Only capture text messages (no images/audio etc)
         if not isinstance(item.text_content, str):
             return
@@ -227,13 +269,10 @@ async def entrypoint(ctx: JobContext):
         if not text:
             return
         
-        # item.role is "assistant" for agent, "user" for user
-        # Map to our naming convention
-        role = "agent" if item.role == "assistant" else "customer"
-        timestamp = datetime.datetime.utcnow().isoformat()
+        timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
         
         entry = {
-            "role": role,
+            "role": "agent",
             "content": text,
             "timestamp": timestamp
         }
@@ -241,8 +280,7 @@ async def entrypoint(ctx: JobContext):
         assistant.call_transcript.append(entry)
         
         # Log the agent's response
-        if role == "agent":
-            logger.info(f"🤖 [agent] ✓: {text}")
+        logger.info(f"🤖 [agent] ✓: {text}")
 
     logger.info("🎯 Starting agent session...")
     
