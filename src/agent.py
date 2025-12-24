@@ -9,6 +9,9 @@ from livekit.agents import (
     NOT_GIVEN,
     AgentFalseInterruptionEvent,
     AgentSession,
+    AudioConfig,
+    BackgroundAudioPlayer,
+    BuiltinAudioClip,
     JobContext,
     JobProcess,
     MetricsCollectedEvent,
@@ -22,7 +25,7 @@ from livekit.agents import (
 from livekit.plugins import cartesia, deepgram, noise_cancellation, openai, silero
 
 from assistant import Assistant
-from services.api_client import fetch_store_info, load_menu
+from services.api_client import fetch_store_info
 from config import LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, CARTESIA_VOICE_ID
 
 logger = logging.getLogger("agent")
@@ -107,27 +110,33 @@ async def entrypoint(ctx: JobContext):
     store_id = None
     store_name = "our restaurant"
     api_session = None
+    notification_phone = None
+    transfer_phone = None
     
     if dialed_number:
         formatted_number = dialed_number if dialed_number.startswith('+') else f'+{dialed_number}'
         logger.info(f"🚀 Fetching store info for {formatted_number}...")
-        store_id, store_name, api_session = await fetch_store_info(formatted_number)
+        store_id, store_name, api_session, notification_phone, transfer_phone = await fetch_store_info(formatted_number)
         
         if store_id:
             ctx.log_context_fields["store_id"] = store_id
             ctx.log_context_fields["store_name"] = store_name
     else:
         logger.warning("⚠️ No dialed number - using defaults")
-
-    # Load menu data first to get categories
+    
+    # Load menu first to get categories for assistant instructions
     menu_categories = None
+    menu_data = {}
     if store_id and api_session:
+        from services.api_client import load_menu
+        logger.info("📋 Loading menu to initialize assistant with categories...")
         menu_data = await load_menu(store_id, api_session)
         if menu_data:
             categories = ", ".join(sorted(menu_data.keys()))
             menu_categories = f"Main dishes: {categories}"
+            logger.info(f"✅ Menu categories loaded: {menu_categories}")
     
-    # Create assistant
+    # Create assistant with actual menu categories
     assistant = Assistant(
         caller_phone=caller_phone,
         dialed_number=dialed_number,
@@ -137,18 +146,43 @@ async def entrypoint(ctx: JobContext):
         menu_categories=menu_categories,
         room_name=ctx.room.name,
         livekit_api_client=lk_api,
+        notification_phone=notification_phone,
+        transfer_phone=transfer_phone,
     )
+    
+    # Pre-populate menu data in assistant (avoid reloading)
+    if menu_data:
+        assistant.menu_by_category = menu_data
+        logger.info(f"✅ Pre-populated {len(menu_data)} menu categories in assistant")
 
-    # Pre-load all data
+    # Pre-load remaining data (knowledge base) in parallel
     if store_id and api_session:
-        logger.info("🔄 Pre-loading menu, knowledge base, and store details...")
-        asyncio.create_task(assistant.load_data())
-        await asyncio.sleep(0.05)
+        logger.info("🔄 Pre-loading knowledge base...")
+        data_load_task = asyncio.create_task(assistant.load_data(skip_menu=True))
+        
+        # Try to wait up to 300ms for KB data
+        try:
+            await asyncio.wait_for(data_load_task, timeout=0.3)
+            logger.info("✅ Knowledge base loaded before agent start")
+        except asyncio.TimeoutError:
+            logger.warning("⚠️ Knowledge base still loading - agent starting anyway")
+
+    # Initialize background_audio variable (will be set after session starts)
+    background_audio = None
 
     # ✅ IMPORTANT: Register save callback FIRST (before cleanup)
     # This ensures the session is still open when saving
     async def save_and_cleanup():
-        """Save conversation, then cleanup session."""
+        """Save conversation, cleanup background audio, then cleanup session."""
+        # STEP 0: Stop background audio first
+        if background_audio is not None:
+            try:
+                logger.info("🎵 Stopping background audio...")
+                await background_audio.aclose()
+                logger.info("🎵 Background audio stopped")
+            except Exception as e:
+                logger.error(f"❌ Error stopping background audio: {e}")
+        
         # STEP 1: Save conversation
         if assistant.call_transcript:
             logger.info(f"💾 Call ended - saving {len(assistant.call_transcript)} transcript entries...")
@@ -292,6 +326,14 @@ async def entrypoint(ctx: JobContext):
             noise_cancellation=noise_cancellation.BVCTelephony(),
         ),
     )
+    
+    # Initialize and start background audio AFTER session starts
+    logger.info("🎵 Initializing background audio...")
+    background_audio = BackgroundAudioPlayer(
+        ambient_sound=AudioConfig("src/busy-restaurant-dining-room-ambience-128466 (1) (1).wav", volume=0.4)
+    )
+    await background_audio.start(room=ctx.room, agent_session=session)
+    logger.info("🎵 Background audio started")
     
     greeting = f"Thank you for calling {store_name}, this is Alex. How may I help you?"
     logger.info(f"💬 Sending greeting: {greeting}")

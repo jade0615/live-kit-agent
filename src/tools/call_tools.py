@@ -71,19 +71,21 @@ def create_call_tools(assistant):
     @function_tool()
     async def end_call(ctx: RunContext) -> str:
         """
-        End the phone call. ONLY use when customer clearly indicates they're done:
-        - "That's all"
-        - "Nothing else"
-        - "Thank you, goodbye"
-        - "No, I'm good"
+        Disconnect and end the phone call after saying goodbye.
         
-        Before calling this tool, you MUST say: "Thank you for calling [Store Name]! Have a great day!"
-        Then wait for the goodbye message to finish before disconnecting.
+        WHEN TO USE: Customer says "That's all" / "Nothing else" / "Bye" / "Thank you, goodbye"
+        
+        HOW TO USE:
+        1. First say: "Awesome! Thanks for calling [Store Name] - have a great day!"
+        2. Then IMMEDIATELY call this tool to disconnect the call
+        3. The tool waits 10 seconds for your goodbye to finish, then disconnects
+        
+        CRITICAL: You must call this tool or the call will never end!
         """
         logger.info("📞 Customer is done - scheduling call end after goodbye...")
         
         # Give the agent time to finish speaking the goodbye message
-        await asyncio.sleep(3.5)
+        await asyncio.sleep(10.0)
         
         if not assistant.livekit_api or not assistant.room_name:
             logger.warning("⚠️ Cannot end call - missing LiveKit API or room name")

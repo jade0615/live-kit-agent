@@ -8,14 +8,14 @@ from config import BASE_URL, API_EMAIL, API_PASSWORD
 logger = logging.getLogger("api_client")
 
 
-async def fetch_store_info(dialed_number: str) -> Tuple[Optional[str], str, Optional[aiohttp.ClientSession]]:
-    """Fetch store ID and name, return authenticated session.
+async def fetch_store_info(dialed_number: str) -> Tuple[Optional[str], str, Optional[aiohttp.ClientSession], Optional[str], Optional[str]]:
+    """Fetch store ID, name, and phone numbers. Return authenticated session.
     
     Args:
         dialed_number: Phone number that was dialed
         
     Returns:
-        Tuple of (store_id, store_name, api_session)
+        Tuple of (store_id, store_name, api_session, notification_phone, transfer_phone)
     """
     session = aiohttp.ClientSession()
     
@@ -28,7 +28,7 @@ async def fetch_store_info(dialed_number: str) -> Tuple[Optional[str], str, Opti
             if resp.status != 200:
                 logger.error(f"❌ Login failed: {resp.status}")
                 await session.close()
-                return None, "Unknown Restaurant", None
+                return None, "Unknown Restaurant", None, None, None
         
         logger.info(f"📞 Fetching store info for: {dialed_number}")
         
@@ -40,24 +40,30 @@ async def fetch_store_info(dialed_number: str) -> Tuple[Optional[str], str, Opti
             else:
                 store_id = None
         
-        # Get store details
+        # Get store details (all in one call to avoid duplicate fetch later)
         if store_id:
             async with session.get(f"{BASE_URL}/api/stores/{store_id}") as response:
                 if response.status == 200:
                     data = await response.json()
                     store_name = data.get("name", "Unknown Restaurant")
+                    notification_phone = data.get("notificationPhone")
+                    transfer_phone = data.get("transferPhone")
+                    logger.info(f"✅ Store: {store_name} (ID: {store_id})")
+                    logger.info(f"✅ Notification phone: {notification_phone}")
+                    logger.info(f"✅ Transfer phone: {transfer_phone}")
+                    return store_id, store_name, session, notification_phone, transfer_phone
                 else:
                     store_name = "Unknown Restaurant"
         else:
             store_name = "Unknown Restaurant"
         
         logger.info(f"✅ Store: {store_name} (ID: {store_id})")
-        return store_id, store_name, session
+        return store_id, store_name, session, None, None
         
     except Exception as e:
         logger.error(f"❌ Error fetching store info: {e}")
         await session.close()
-        return None, "Unknown Restaurant", None
+        return None, "Unknown Restaurant", None, None, None
 
 
 async def load_menu(store_id: str, session: aiohttp.ClientSession) -> Dict[str, List[Dict]]:

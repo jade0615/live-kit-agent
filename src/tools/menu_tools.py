@@ -10,42 +10,6 @@ def create_menu_tools(assistant):
     """Create menu-related tools for the assistant."""
     
     @function_tool()
-    async def get_menu_categories(ctx: RunContext) -> str:
-        """Get menu categories when customer asks what's available."""
-        logger.info("Fetching menu categories")
-        
-        if not assistant.menu_by_category:
-            from services.api_client import load_menu
-            assistant.menu_by_category = await load_menu(assistant.store_id, assistant.api_session)
-        
-        main_categories = []
-        addon_categories = []
-        
-        for category in sorted(assistant.menu_by_category.keys()):
-            cat_lower = category.lower()
-            if any(keyword in cat_lower for keyword in ['add-on', 'side', 'extra', 'sauce', 'drink', 'beverage']):
-                addon_categories.append(category)
-            else:
-                main_categories.append(category)
-        
-        if not main_categories:
-            return "No menu categories available."
-        
-        featured = main_categories[:4]
-        remaining_count = len(main_categories) - 4
-        
-        summary = f"Main categories: {', '.join(featured)}"
-        
-        if remaining_count > 0:
-            summary += f" (plus {remaining_count} more)"
-        
-        if addon_categories:
-            summary += f". Also available: sides, drinks, and extras."
-        
-        logger.info(f"Returning summary: {summary}")
-        return summary
-
-    @function_tool()
     async def get_menu_by_category(ctx: RunContext, category: str) -> List[str]:
         """Get items in a category.
         
@@ -90,4 +54,4 @@ def create_menu_tools(assistant):
         
         return f"Item '{item_name}' not found"
     
-    return [get_menu_categories, get_menu_by_category, get_item_price]
+    return [get_menu_by_category, get_item_price]

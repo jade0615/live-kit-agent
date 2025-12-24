@@ -23,6 +23,8 @@ class Assistant(Agent):
         menu_categories: Optional[str] = None,
         room_name: str = "",
         livekit_api_client: Optional[livekit_api.LiveKitAPI] = None,
+        notification_phone: Optional[str] = None,
+        transfer_phone: Optional[str] = None,
     ) -> None:
         # Store instance variables FIRST (before super().__init__)
         self.caller_phone = caller_phone
@@ -36,8 +38,8 @@ class Assistant(Agent):
         # Data storage
         self.menu_by_category: Dict[str, List[Dict]] = {}
         self.knowledge_base: List[Dict] = []
-        self.notification_phone: Optional[str] = None
-        self.transfer_phone: Optional[str] = None
+        self.notification_phone: Optional[str] = notification_phone
+        self.transfer_phone: Optional[str] = transfer_phone
         
         # Transcript tracking
         self.call_transcript: List[Dict] = []
@@ -73,16 +75,18 @@ Examples of good short responses:
 
 HOW TO PRESENT THE MENU:
 When customers ask "What do you have?" or "What's on the menu?":
-- Keep it brief: list 3-4 main categories, then say "and a few others"
+- Answer directly from YOUR MENU CATEGORIES section above
+- Keep it brief: mention 3-4 main categories, then say "and a few others"
 - Example: "So we have Chef's Specials, Chicken, Beef, and some other options"
 - Don't list ALL categories - just the highlights
-- STRICTLY stick to the real category names - don't improvise or generalize
+- STRICTLY use the exact category names from your instructions
+- DON'T make up or generalize category names
 
 WORKFLOW:
 
 Menu Questions:
-→ For general "what do you have": mention 3-4 categories briefly
-→ For specific items: use get_menu_by_category to look up details
+→ For general "what do you have": Answer DIRECTLY from YOUR MENU CATEGORIES (no tool needed!)
+→ For specific items in a category: use get_menu_by_category to look up details
 → Keep answers short - just the info they need
 → Use get_item_price ONLY when customer asks about price
 → Don't mention prices unless asked
@@ -103,7 +107,13 @@ Reservations:
 → Check knowledge base for reservation policy silently
 → Collect: name, date, time, party size (one at a time, keep questions short)
 → Convert "tomorrow" or "7 PM" to proper formats using check_current_time
-→ Call make_reservation
+→ BEFORE calling make_reservation: Use search_knowledge_base("hours") silently to verify operating hours
+→ Compare the requested reservation time with operating hours
+→ If time is OUTSIDE operating hours:
+  • "I'm sorry, we'll actually be closed at [time]. We're open [hours]. Would you like to book during those hours instead?"
+  • Wait for customer to provide a new time
+  • Don't proceed with reservation until they give a valid time
+→ If time is WITHIN operating hours: Call make_reservation
 → Brief confirmation, then: "Anything else you need?"
 
 General Questions (Hours, Location, Policies):
@@ -118,10 +128,10 @@ If customer requests manager/human:
 → Call transfer_to_manager immediately
 
 ENDING CALLS:
-Only call end_call when customer signals they're done:
-- "That's all" / "Nothing else" / "Thank you, bye" / "I'm good"
-
-Before ending: "Awesome! Thanks for calling {store_name} - have a great day!"
+When customer signals they're done ("That's all" / "Nothing else" / "Thank you, bye" / "I'm good"):
+1. Say: "Awesome! Thanks for calling {store_name} - have a great day!"
+2. IMMEDIATELY call the end_call tool (this disconnects the call)
+→ You MUST call end_call or the call will never disconnect
 
 CRITICAL RULES:
 - Keep responses SHORT - 1-2 sentences for most answers
@@ -158,30 +168,40 @@ CRITICAL RULES:
         logger.info(f"✅ Registered {len(all_tools)} tools for assistant")
         return all_tools
     
-    async def load_data(self):
-        """Load menu, knowledge base, and store details in parallel."""
+    async def load_data(self, skip_menu: bool = False):
+        """Load menu and knowledge base in parallel (store details already loaded).
+        
+        Args:
+            skip_menu: If True, skip loading menu (already loaded before assistant creation)
+        """
         if not self.store_id:
             logger.warning("⚠️ No store_id - skipping data load")
             return
             
-        logger.info("🔄 Loading menu, knowledge base, and store details in parallel...")
+        from services.api_client import load_menu, load_knowledge_base
         
-        from services.api_client import load_menu, load_knowledge_base, load_store_details
-        
-        results = await asyncio.gather(
-            load_menu(self.store_id, self.api_session),
-            load_knowledge_base(self.store_id, self.api_session),
-            load_store_details(self.store_id, self.api_session),
-            return_exceptions=True
-        )
-        
-        self.menu_by_category = results[0] if not isinstance(results[0], Exception) else {}
-        self.knowledge_base = results[1] if not isinstance(results[1], Exception) else []
-        
-        if not isinstance(results[2], Exception):
-            self.notification_phone, self.transfer_phone = results[2]
-        
-        logger.info(f"✅ Data loaded: {len(self.menu_by_category)} categories, {len(self.knowledge_base)} KB entries")
+        if skip_menu:
+            # Only load knowledge base (menu already populated)
+            logger.info("🔄 Loading knowledge base...")
+            try:
+                self.knowledge_base = await load_knowledge_base(self.store_id, self.api_session)
+                logger.info(f"✅ Knowledge base loaded: {len(self.knowledge_base)} entries")
+            except Exception as e:
+                logger.error(f"❌ Error loading knowledge base: {e}")
+                self.knowledge_base = []
+        else:
+            # Load both menu and knowledge base (fallback for backwards compatibility)
+            logger.info("🔄 Loading menu and knowledge base in parallel...")
+            results = await asyncio.gather(
+                load_menu(self.store_id, self.api_session),
+                load_knowledge_base(self.store_id, self.api_session),
+                return_exceptions=True
+            )
+            
+            self.menu_by_category = results[0] if not isinstance(results[0], Exception) else {}
+            self.knowledge_base = results[1] if not isinstance(results[1], Exception) else []
+            
+            logger.info(f"✅ Data loaded: {len(self.menu_by_category)} categories, {len(self.knowledge_base)} KB entries")
     
     def get_call_duration_seconds(self) -> int:
         """Get call duration in seconds."""
