@@ -1,6 +1,8 @@
 """Assistant agent class."""
 from livekit.agents import Agent
 from livekit import api as livekit_api
+from tools.call_tools import handle_transfer_request
+
 from typing import Optional, Dict, List
 import aiohttp
 import asyncio
@@ -124,8 +126,18 @@ General Questions (Hours, Location, Policies):
 
 TRANSFER TO MANAGER:
 If customer requests manager/human:
-→ "Of course! Let me get our manager - just one sec"
-→ Call transfer_to_manager immediately
+- Collect customer name and phone
+- Say: "I can transfer you to our manager, or they can call you back within 5 minutes. Which would you prefer?"
+- If customer chooses TRANSFER:
+    → Say: "I'll transfer you now. If they don't answer, we'll call you back at [phone]."
+    → Call transfer_to_manager
+    → If transfer fails or is unanswered, send SMS to customer and manager
+- If customer chooses CALLBACK:
+    → Say: "Perfect! Our manager will call you at [phone] within 5 minutes."
+    → Send SMS to manager and customer
+    → End call politely
+- Always set clear expectations for the customer before initiating transfer
+
 
 ENDING CALLS:
 When customer signals they're done ("That's all" / "Nothing else" / "Thank you, bye" / "I'm good"):
@@ -202,6 +214,12 @@ CRITICAL RULES:
             self.knowledge_base = results[1] if not isinstance(results[1], Exception) else []
             
             logger.info(f"✅ Data loaded: {len(self.menu_by_category)} categories, {len(self.knowledge_base)} KB entries")
+    
+    
+
+    async def handle_transfer_request(self, ctx, customer_name, customer_phone, reason="Inquiry"):
+        return await handle_transfer_request(self, ctx, customer_name, customer_phone, reason)
+
     
     def get_call_duration_seconds(self) -> int:
         """Get call duration in seconds."""

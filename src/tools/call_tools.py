@@ -1,6 +1,8 @@
 """Call management tools (transfer and end call)."""
 from livekit.agents import function_tool, RunContext
 from livekit import rtc, api as livekit_api
+from services.sms_service import send_sms
+
 import asyncio
 import logging
 
@@ -158,4 +160,61 @@ def create_call_tools(assistant):
         logger.info(f"✅ Conversation saved successfully")
         return "Conversation saved successfully"
     
-    return [transfer_to_manager, end_call, save_conversation]
+    @function_tool()
+    async def handle_transfer_request(
+        self,
+        ctx: RunContext,
+        customer_name: str,
+        customer_phone: str,
+        reason: str = "Inquiry",
+        manager_phone: str = "(618) 258-1388"
+    ):
+        """Handle transfer/callback flow per client expectations."""
+        
+        # 1️⃣ Ask preference
+        await ctx.say(
+            "I can transfer you to our manager, or they can call you back within 5 minutes. "
+            "Which would you prefer?"
+        )
+        customer_choice = await ctx.listen()  # Should return "transfer" or "callback"
+        
+        if "transfer" in customer_choice.lower():
+            # 2️⃣ Attempt transfer
+            await ctx.say(
+                f"I'll transfer you now. If they don't answer, we'll call you back at {customer_phone}."
+            )
+            
+            try:
+                transfer_success = await self.transfer_to_manager(ctx, manager_phone)
+                if not transfer_success:
+                    raise Exception("Transfer failed")
+            except Exception:
+                # Transfer failed → send SMS to customer & store
+                await send_sms(self.dialed_number, customer_phone,
+                    f"Thank you! We'll call you back at {customer_phone} within 5 minutes."
+                )
+                if self.notification_phone:
+                    await send_sms(
+                        self.dialed_number,
+                        self.notification_phone,
+                        f"🔔 CALLBACK NEEDED\nCustomer: {customer_name}\nPhone: {customer_phone}\nReason: {reason}\n⚠️ Transfer attempted but may have failed\nPlease call back within 5 minutes!"
+                    )
+                return "Transfer failed; callback SMS sent."
+
+        else:
+            # 3️⃣ Customer chose callback
+            await ctx.say(
+                f"Perfect! Our manager will call you at {customer_phone} within 5 minutes. Goodbye!"
+            )
+            if self.notification_phone:
+                await send_sms(
+                    self.dialed_number,
+                    self.notification_phone,
+                    f"🔔 CALLBACK REQUESTED\nCustomer: {customer_name}\nPhone: {customer_phone}\nReason: {reason}\nPlease call back within 5 minutes!"
+                )
+            return "Callback scheduled."
+    
+    return [transfer_to_manager, end_call, save_conversation, handle_transfer_request]
+
+    
+
