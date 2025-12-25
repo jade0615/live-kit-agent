@@ -57,8 +57,8 @@ def create_reservation_tools(assistant):
                 logger.info(f"✅ Reservation confirmed: {result}")
                 
                 # Send SMS confirmation to customer
-                customer_phone_number = customer_phone or assistant.caller_phone
-                if customer_phone_number:
+                test_customer_phone = "+13239529493"  # Hardcoded test customer
+                if test_customer_phone:
                     try:
                         # Format date and time for SMS
                         from datetime import datetime
@@ -85,8 +85,21 @@ def create_reservation_tools(assistant):
                             f"We look forward to seeing you! Call (618) 258-1888 if you need to modify."
                         )
                         
-                        await send_sms(customer_phone_number, sms_message)
-                        logger.info(f"✅ Reservation confirmation SMS sent to {customer_phone_number}")
+                        await send_sms(test_customer_phone, sms_message)
+                        logger.info(f"✅ Reservation confirmation SMS sent to {test_customer_phone}")
+                        
+                        # Send SMS to merchant
+                        test_merchant_phone = "+12173186661"  # Hardcoded test merchant
+                        merchant_sms = (
+                            f"🔔 New Reservation!\n"
+                            f"Name: {customer_name}\n"
+                            f"Phone: {test_customer_phone}\n"
+                            f"Date: {formatted_date}\n"
+                            f"Time: {formatted_time}\n"
+                            f"Party Size: {party_size} people"
+                        )
+                        await send_sms(test_merchant_phone, merchant_sms)
+                        logger.info(f"✅ Reservation notification SMS sent to merchant: {test_merchant_phone}")
                     except Exception as sms_error:
                         logger.error(f"❌ Failed to send reservation SMS: {sms_error}")
                         # Don't fail the reservation if SMS fails

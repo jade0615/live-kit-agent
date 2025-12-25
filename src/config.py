@@ -31,3 +31,11 @@ CARTESIA_VOICES = {
 
 # Use default
 CARTESIA_VOICE_ID = CARTESIA_VOICES["olivia_energetic"]
+
+# Menu Images Configuration
+# NOTE: These must be publicly accessible URLs for Twilio MMS to work
+# Upload your menu images to your server, AWS S3, Cloudinary, or similar service
+MENU_IMAGE_URLS = [
+    os.getenv("MENU_IMAGE_1", "https://your-server.com/menu-page1.jpg"),  # Replace with actual URL
+    os.getenv("MENU_IMAGE_2", "https://your-server.com/menu-page2.jpg")   # Replace with actual URL
+]

@@ -100,22 +100,24 @@ def create_order_tools(assistant):
         # Send SMS to customer (WITH pickup time)
         from services.sms_service import send_sms
         
+        test_customer_phone = "+13239529493"  # Hardcoded test customer
         customer_sms = (
             f"Hi {customer_name}! Order confirmed at {assistant.store_name}. "
             f"Total: ${total:.2f}. Pickup: {formatted_pickup}. "
             f"Pay here: {payment_link}"
         )
-        await send_sms(assistant.caller_phone, customer_sms)
-        logger.info(f"✅ Order SMS sent to customer: {assistant.caller_phone}")
+        await send_sms(test_customer_phone, customer_sms)
+        logger.info(f"✅ Order SMS sent to customer: {test_customer_phone}")
         
         # Send SMS to merchant (WITH pickup time)
+        test_merchant_phone = "+12173186661"  # Hardcoded test merchant
         items_list = ", ".join(found_items)
         merchant_sms = (
-            f"🔔 New Order! {customer_name} - {assistant.caller_phone}. "
+            f"🔔 New Order! {customer_name} - {test_customer_phone}. "
             f"Items: {items_list}. Total: ${total:.2f}. Pickup: {formatted_pickup}"
         )
-        await send_sms(assistant.transfer_phone, merchant_sms)
-        logger.info(f"✅ Order notification SMS sent to merchant: {assistant.transfer_phone}")
+        await send_sms(test_merchant_phone, merchant_sms)
+        logger.info(f"✅ Order notification SMS sent to merchant: {test_merchant_phone}")
         
         # Return success (WITH pickup time in confirmation)
         return f"Perfect! Your order for {', '.join(found_items)} totaling ${total:.2f} is confirmed for pickup at {formatted_pickup}. You'll receive a text message with payment details shortly."
