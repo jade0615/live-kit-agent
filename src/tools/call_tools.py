@@ -2,7 +2,7 @@
 from livekit.agents import function_tool, RunContext
 from livekit import rtc, api as livekit_api
 from services.sms_service import send_sms
-
+from google.protobuf import duration_pb2
 import asyncio
 import logging
 
@@ -15,13 +15,17 @@ def create_call_tools(assistant):
     @function_tool()
     async def transfer_to_manager(ctx: RunContext) -> str:
         """
-        Transfer the call to a live manager/human agent.
+        Transfer the call to a live manager/human agent with automatic fallback.
         Use when customer explicitly requests:
         - "I want to talk to your manager"
         - "Can I speak to someone"
         - "Transfer me to a person"
         
         Before calling this, say: "Of course! Let me transfer you to our manager. Please hold."
+        
+        Returns:
+        - "Transfer successful" if manager answers
+        - "Manager unavailable - SMS sent..." if no answer (you should then inform customer and offer help)
         """
         logger.info("📞 Transferring call to manager...")
         
@@ -55,18 +59,78 @@ def create_call_tools(assistant):
                 logger.error("❌ No SIP participant found in room")
                 return "I'm sorry, I couldn't find the active call to transfer."
             
-            # Use LiveKit's SIP transfer API with correct participant identity
+            # Use LiveKit's SIP transfer API with 30-second timeout
             await assistant.livekit_api.sip.transfer_sip_participant(
                 livekit_api.TransferSIPParticipantRequest(
                     room_name=assistant.room_name,
                     participant_identity=sip_participant_identity,
                     transfer_to=transfer_to,
+                    play_dialtone=False,
+                    ringing_timeout=duration_pb2.Duration(seconds=30)
                 )
             )
-            logger.info("✅ Call transfer initiated successfully")
-            return "Transferring you now. Please hold."
+            logger.info("✅ Call transfer initiated with 30-second timeout")
+            
+            # Wait for transfer to complete or timeout (30s + 2s buffer)
+            await asyncio.sleep(32)
+            
+            # Check if customer is still in the room (transfer failed/not answered)
+            participants_after = await assistant.livekit_api.room.list_participants(
+                livekit_api.ListParticipantsRequest(room=assistant.room_name)
+            )
+            
+            customer_still_there = any(
+                p.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP 
+                for p in participants_after.participants
+            )
+            
+            if customer_still_there:
+                # Transfer failed - customer is still in room, agent resumes
+                logger.warning("⚠️ Transfer failed or not answered - customer still in room")
+                
+                # Send SMS to customer
+                if assistant.caller_phone:
+                    try:
+                        await send_sms(
+                            assistant.caller_phone,
+                            f"Thank you for calling! Our manager will call you back at {assistant.caller_phone} within 5 minutes."
+                        )
+                        logger.info(f"✅ SMS sent to customer: {assistant.caller_phone}")
+                    except Exception as sms_error:
+                        logger.error(f"❌ Failed to send SMS to customer: {sms_error}")
+                
+                # Send SMS to manager/store
+                # Use hardcoded test merchant number for now
+                test_merchant_phone = "+12173186661"
+                
+                try:
+                    customer_name = getattr(assistant, 'customer_name', 'Customer')
+                    await send_sms(
+                        test_merchant_phone,
+                        f"🔔 CALLBACK NEEDED\n"
+                        f"Customer: {customer_name}\n"
+                        f"Phone: {assistant.caller_phone}\n"
+                        f"⚠️ Transfer attempted but manager didn't answer\n"
+                        f"Please call back within 5 minutes!"
+                    )
+                    logger.info(f"✅ SMS sent to TEST merchant: {test_merchant_phone}")
+                except Exception as sms_error:
+                    logger.error(f"❌ Failed to send SMS to manager: {sms_error}")
+                
+                return "Manager unavailable - SMS sent to customer and manager confirming callback within 5 minutes"
+            else:
+                # Transfer succeeded - customer was transferred out
+                logger.info("✅ Transfer successful - customer left room")
+                return "Transfer successful - customer connected to manager"
             
         except Exception as e:
+            error_message = str(e)
+            
+            # Room not found (404) means transfer succeeded - room closed after customer left
+            if "not_found" in error_message.lower() or "404" in error_message:
+                logger.info("✅ Transfer successful - room closed after customer transferred")
+                return "Transfer successful - customer connected to manager"
+            
             logger.error(f"❌ Call transfer failed: {e}")
             return "I'm sorry, I couldn't transfer the call. Let me see if I can help you instead."
 
@@ -87,7 +151,7 @@ def create_call_tools(assistant):
         logger.info("📞 Customer is done - scheduling call end after goodbye...")
         
         # Give the agent time to finish speaking the goodbye message
-        await asyncio.sleep(10.0)
+        await asyncio.sleep(8.0)
         
         if not assistant.livekit_api or not assistant.room_name:
             logger.warning("⚠️ Cannot end call - missing LiveKit API or room name")
@@ -160,61 +224,7 @@ def create_call_tools(assistant):
         logger.info(f"✅ Conversation saved successfully")
         return "Conversation saved successfully"
     
-    @function_tool()
-    async def handle_transfer_request(
-        self,
-        ctx: RunContext,
-        customer_name: str,
-        customer_phone: str,
-        reason: str = "Inquiry",
-        manager_phone: str = "(618) 258-1388"
-    ):
-        """Handle transfer/callback flow per client expectations."""
-        
-        # 1️⃣ Ask preference
-        await ctx.say(
-            "I can transfer you to our manager, or they can call you back within 5 minutes. "
-            "Which would you prefer?"
-        )
-        customer_choice = await ctx.listen()  # Should return "transfer" or "callback"
-        
-        if "transfer" in customer_choice.lower():
-            # 2️⃣ Attempt transfer
-            await ctx.say(
-                f"I'll transfer you now. If they don't answer, we'll call you back at {customer_phone}."
-            )
-            
-            try:
-                transfer_success = await self.transfer_to_manager(ctx, manager_phone)
-                if not transfer_success:
-                    raise Exception("Transfer failed")
-            except Exception:
-                # Transfer failed → send SMS to customer & store
-                await send_sms(self.dialed_number, customer_phone,
-                    f"Thank you! We'll call you back at {customer_phone} within 5 minutes."
-                )
-                if self.notification_phone:
-                    await send_sms(
-                        self.dialed_number,
-                        self.notification_phone,
-                        f"🔔 CALLBACK NEEDED\nCustomer: {customer_name}\nPhone: {customer_phone}\nReason: {reason}\n⚠️ Transfer attempted but may have failed\nPlease call back within 5 minutes!"
-                    )
-                return "Transfer failed; callback SMS sent."
-
-        else:
-            # 3️⃣ Customer chose callback
-            await ctx.say(
-                f"Perfect! Our manager will call you at {customer_phone} within 5 minutes. Goodbye!"
-            )
-            if self.notification_phone:
-                await send_sms(
-                    self.dialed_number,
-                    self.notification_phone,
-                    f"🔔 CALLBACK REQUESTED\nCustomer: {customer_name}\nPhone: {customer_phone}\nReason: {reason}\nPlease call back within 5 minutes!"
-                )
-            return "Callback scheduled."
-    
-    return [transfer_to_manager, end_call, save_conversation, handle_transfer_request]
+    return [transfer_to_manager, end_call, save_conversation]
 
     
 

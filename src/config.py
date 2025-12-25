@@ -17,6 +17,9 @@ LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET", "")
 # Twilio Configuration
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_API_KEY_SID = os.getenv("TWILIO_API_KEY_SID")
+TWILIO_API_KEY_SECRET = os.getenv("TWILIO_API_KEY_SECRET")
+TWILIO_FROM_NUMBER = os.getenv("TWILIO_FROM_NUMBER")  # A2P certified number for sending SMS
 
 # Voice Configuration
 CARTESIA_VOICES = {

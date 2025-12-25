@@ -13,10 +13,17 @@ def create_knowledge_tools(assistant):
     
     @function_tool()
     async def search_knowledge_base(ctx: RunContext, query: str) -> str:
-        """Search FAQs for hours, policies, location, delivery, etc.
+        """Search FAQs for hours, policies, location, pricing, menu items, etc.
+        
+        Use SPECIFIC search terms for best results:
+        - For pricing: "kids pricing", "adult pricing", "crab legs price", "lunch price"  
+        - For menu: "crab legs", "sushi", "vegetarian"
+        - For info: "hours", "location", "payment", "delivery"
+        
+        Returns the most relevant FAQ entries ranked by relevance.
         
         Args:
-            query: Keywords (e.g., "hours", "delivery", "location")
+            query: Specific keywords or question (e.g., "kids pricing", "crab legs")
         """
         logger.info(f"🔍 Searching knowledge base for: {query}")
         
@@ -27,22 +34,94 @@ def create_knowledge_tools(assistant):
         if not assistant.knowledge_base:
             return "I don't have that information. Please call us directly."
         
-        query_lower = query.lower()
-        results = []
+        query_lower = query.lower().strip()
+        
+        # Synonym mapping for better matching
+        synonyms = {
+            'kids': ['children', 'kid', 'child'],
+            'children': ['kids', 'kid', 'child'],
+            'price': ['cost', 'pricing', 'how much'],
+            'cost': ['price', 'pricing', 'how much'],
+            'hours': ['open', 'close', 'time'],
+            'crab legs': ['crab', 'seafood boil'],
+            'takeout': ['to-go', 'take out', 'carryout'],
+            'to-go': ['takeout', 'take out', 'carryout']
+        }
+        
+        # Expand query with synonyms
+        query_words = set(query_lower.split())
+        for word in list(query_words):
+            if word in synonyms:
+                query_words.update(synonyms[word])
+        
+        scored_results = []
         
         for entry in assistant.knowledge_base:
             question = entry.get('question', '').lower()
             answer = entry.get('answer', '')
+            score = 0
             
-            if query_lower in question or any(word in question for word in query_lower.split()):
-                results.append(f"Q: {entry.get('question', '')}\nA: {answer}")
+            # 1. Exact question match (highest score)
+            if query_lower == question:
+                score += 1000
+            
+            # 2. Query is substring of question (very high score)
+            elif query_lower in question:
+                score += 500
+            
+            # 3. Question is substring of query (high score)
+            elif question in query_lower:
+                score += 400
+            
+            # 4. Word overlap scoring
+            question_words = set(question.split())
+            common_words = query_words & question_words
+            
+            # Filter out common stopwords for better matching
+            stopwords = {'do', 'you', 'have', 'is', 'are', 'the', 'a', 'an', 'what', 'how', 'when', 'where', 'can', 'i'}
+            meaningful_common = common_words - stopwords
+            
+            if meaningful_common:
+                # Score based on percentage of meaningful words matched
+                score += len(meaningful_common) * 50
+                
+                # Bonus for matching multiple important words
+                if len(meaningful_common) >= 2:
+                    score += 100
+            
+            # 5. Bonus for matching key terms
+            key_terms = ['free', 'crab legs', 'pricing', 'hours', 'location', 'delivery', 'takeout', 'to-go', 'kids', 'children']
+            for term in key_terms:
+                if term in query_lower and term in question:
+                    score += 150
+            
+            # Only include results with meaningful matches (score threshold)
+            if score >= 50:  # Minimum threshold to filter out weak matches
+                scored_results.append({
+                    'entry': entry,
+                    'score': score,
+                    'question': entry.get('question', ''),
+                    'answer': answer
+                })
         
-        if results:
-            logger.info(f"Found {len(results)} matches")
-            return "\n\n".join(results[:3])
+        # Sort by score (highest first)
+        scored_results.sort(key=lambda x: x['score'], reverse=True)
+        
+        if scored_results:
+            # Log scoring details for debugging
+            logger.info(f"Found {len(scored_results)} matches (top score: {scored_results[0]['score']})")
+            if len(scored_results) > 1:
+                logger.info(f"Top 3 scores: {[r['score'] for r in scored_results[:3]]}")
+            
+            # Return ALL relevant results (but limit to top 5 for efficiency)
+            # This ensures we don't overwhelm the LLM while still providing complete info
+            top_results = scored_results[:5]
+            formatted_results = [f"Q: {r['question']}\nA: {r['answer']}" for r in top_results]
+            
+            return "\n\n".join(formatted_results)
         else:
             logger.info("No matches found")
-            return f"I don't have info about '{query}'. Anything else I can help with?"
+            return f"I don't have specific info about '{query}'. You can call us at (618) 258-1888 for details."
 
     @function_tool()
     async def check_current_time(ctx: RunContext) -> str:

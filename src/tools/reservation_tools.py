@@ -3,6 +3,7 @@ from livekit.agents import function_tool, RunContext
 from typing import Optional
 import logging
 from config import BASE_URL
+from services.sms_service import send_sms
 
 logger = logging.getLogger("reservation_tools")
 
@@ -54,6 +55,42 @@ def create_reservation_tools(assistant):
             if resp.status in (200, 201):
                 result = await resp.json()
                 logger.info(f"✅ Reservation confirmed: {result}")
+                
+                # Send SMS confirmation to customer
+                customer_phone_number = customer_phone or assistant.caller_phone
+                if customer_phone_number:
+                    try:
+                        # Format date and time for SMS
+                        from datetime import datetime
+                        try:
+                            date_obj = datetime.strptime(date, "%Y-%m-%d")
+                            formatted_date = date_obj.strftime("%B %d, %Y")  # e.g., "December 25, 2025"
+                        except:
+                            formatted_date = date
+                        
+                        try:
+                            time_obj = datetime.strptime(time, "%H:%M")
+                            formatted_time = time_obj.strftime("%I:%M %p")  # e.g., "07:00 PM"
+                        except:
+                            formatted_time = time
+                        
+                        store_name = getattr(assistant, 'store_name', 'our restaurant')
+                        sms_message = (
+                            f"🎉 Reservation Confirmed!\n\n"
+                            f"Name: {customer_name}\n"
+                            f"Date: {formatted_date}\n"
+                            f"Time: {formatted_time}\n"
+                            f"Party Size: {party_size} people\n"
+                            f"Location: {store_name}\n\n"
+                            f"We look forward to seeing you! Call (618) 258-1888 if you need to modify."
+                        )
+                        
+                        await send_sms(customer_phone_number, sms_message)
+                        logger.info(f"✅ Reservation confirmation SMS sent to {customer_phone_number}")
+                    except Exception as sms_error:
+                        logger.error(f"❌ Failed to send reservation SMS: {sms_error}")
+                        # Don't fail the reservation if SMS fails
+                
                 return f"Perfect! Your reservation for {party_size} people on {date} at {time} is confirmed."
             else:
                 details = await resp.text()

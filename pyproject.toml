@@ -14,7 +14,8 @@ dependencies = [
     "python-dotenv",
     "pytz",
     "twilio",
-    "aiohttp"
+    "aiohttp",
+    "protobuf",
 ]
 
 [dependency-groups]

@@ -231,7 +231,8 @@ async def entrypoint(ctx: JobContext):
         stt=deepgram.STT(model="nova-3", language="multi"),
        tts=cartesia.TTS(
       model="sonic-3",
-      voice="b7d50908-b17c-442d-ad8d-810c63997ed9",
+    #   voice="b7d50908-b17c-442d-ad8d-810c63997ed9",
+      voice="a53c3509-ec3f-425c-a223-977f5f7424dd",
       sample_rate=8000
    ),
         vad=ctx.proc.userdata["vad"],
