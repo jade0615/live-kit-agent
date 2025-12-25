@@ -100,20 +100,17 @@ def create_call_tools(assistant):
                         logger.error(f"❌ Failed to send SMS to customer: {sms_error}")
                 
                 # Send SMS to manager/store
-                # Use hardcoded test merchant number for now
-                test_merchant_phone = "+12173186661"
-                
                 try:
                     customer_name = getattr(assistant, 'customer_name', 'Customer')
                     await send_sms(
-                        test_merchant_phone,
+                        assistant.transfer_phone,
                         f"🔔 CALLBACK NEEDED\n"
                         f"Customer: {customer_name}\n"
                         f"Phone: {assistant.caller_phone}\n"
                         f"⚠️ Transfer attempted but manager didn't answer\n"
                         f"Please call back within 5 minutes!"
                     )
-                    logger.info(f"✅ SMS sent to TEST merchant: {test_merchant_phone}")
+                    logger.info(f"✅ SMS sent to manager: {assistant.transfer_phone}")
                 except Exception as sms_error:
                     logger.error(f"❌ Failed to send SMS to manager: {sms_error}")
                 

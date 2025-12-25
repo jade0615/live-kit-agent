@@ -34,11 +34,11 @@ logger = logging.getLogger("agent")
 def prewarm(proc: JobProcess):
     """Pre-warm VAD model for faster startup."""
     proc.userdata["vad"] = silero.VAD.load(
-        min_silence_duration=0.15,
+        min_silence_duration=0.30,
         prefix_padding_duration=0.08,
-        activation_threshold=0.65,
-        deactivation_threshold=0.20,
-        sample_rate=8000,
+        activation_threshold=0.58,
+        deactivation_threshold=0.18,
+        sample_rate=16000,
     )
 
 
@@ -231,9 +231,9 @@ async def entrypoint(ctx: JobContext):
         stt=deepgram.STT(model="nova-3", language="multi"),
        tts=cartesia.TTS(
       model="sonic-3",
-    #   voice="b7d50908-b17c-442d-ad8d-810c63997ed9",
-      voice="a53c3509-ec3f-425c-a223-977f5f7424dd",
-      sample_rate=8000
+      voice="b7d50908-b17c-442d-ad8d-810c63997ed9",
+    #   voice="a53c3509-ec3f-425c-a223-977f5f7424dd",
+      sample_rate=16000
    ),
         vad=ctx.proc.userdata["vad"],
         preemptive_generation=True,

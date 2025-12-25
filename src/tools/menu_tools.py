@@ -32,26 +32,65 @@ def create_menu_tools(assistant):
         return [f"Category '{category}' not available"]
 
     @function_tool()
-    async def get_item_price(ctx: RunContext, item_name: str) -> str:
-        """Get price ONLY when customer explicitly asks "how much".
+    async def get_item_prices(ctx: RunContext, item_names: list[str]) -> str:
+        """Get prices for one or more menu items and calculate total.
+        
+        Use when customer asks about price(s) for items they mentioned.
+        The LLM should track items mentioned in conversation context.
         
         Args:
-            item_name: Menu item name
+            item_names: List of menu item names (can be 1 or more items)
+        
+        Returns:
+            Formatted string with individual prices and total (if multiple items)
         """
-        logger.info(f"Looking up price for: {item_name}")
+        logger.info(f"Looking up prices for: {item_names}")
         
         if not assistant.menu_by_category:
             from services.api_client import load_menu
             assistant.menu_by_category = await load_menu(assistant.store_id, assistant.api_session)
         
-        item_lower = item_name.lower()
+        # Build a lookup dictionary for fast searching
+        item_lookup = {}
         for category, items in assistant.menu_by_category.items():
             for item in items:
-                if item['name'].lower() == item_lower:
-                    price = item['price']
-                    logger.info(f"Price for '{item['name']}': ${price}")
-                    return f"${price}"
+                item_lookup[item['name'].lower()] = {
+                    'name': item['name'],  # Preserve original capitalization
+                    'price': float(item['price'])
+                }
         
-        return f"Item '{item_name}' not found"
+        found_items = []
+        not_found = []
+        total = 0.0
+        
+        # Look up each item
+        for item_name in item_names:
+            item_info = item_lookup.get(item_name.lower())
+            if item_info:
+                found_items.append(item_info)
+                total += item_info['price']
+            else:
+                not_found.append(item_name)
+        
+        # Format response
+        if not found_items and not_found:
+            return f"Sorry, I couldn't find: {', '.join(not_found)}"
+        
+        response_parts = []
+        
+        # List individual items and prices
+        for item in found_items:
+            response_parts.append(f"{item['name']}: ${item['price']:.2f}")
+        
+        # Add total if multiple items
+        if len(found_items) > 1:
+            response_parts.append(f"Total: ${total:.2f}")
+        
+        # Mention not found items
+        if not_found:
+            response_parts.append(f"(Couldn't find: {', '.join(not_found)})")
+        
+        logger.info(f"✅ Found {len(found_items)} items, total: ${total:.2f}")
+        return "\n".join(response_parts)
     
-    return [get_menu_by_category, get_item_price]
+    return [get_menu_by_category, get_item_prices]
